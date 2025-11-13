@@ -1,0 +1,36 @@
+/**
+ * UK br Changer - Editor Styles
+ * ブロックエディタ内でのプレビュー用スタイル
+ */
+
+/* エディタ内でも同様の表示を実現（プレビューモードで確認可能） */
+@media screen and (min-width: 1025px) {
+    br.uk-br-show-pc-only {
+        display: none;
+    }
+}
+
+@media screen and (min-width: 768px) and (max-width: 1024px) {
+    br.uk-br-show-tablet-only {
+        display: none;
+    }
+}
+
+@media screen and (max-width: 767px) {
+    br.uk-br-show-mobile-only {
+        display: none;
+    }
+}
+
+/* JavaScriptで挿入されるマーカーのスタイル */
+.uk-br-marker {
+    display: inline-block !important;
+    vertical-align: middle;
+    margin: 0 4px;
+    transition: all 0.2s ease;
+}
+
+.uk-br-marker:hover {
+    transform: scale(1.05);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}

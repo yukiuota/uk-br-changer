@@ -1,0 +1,37 @@
+/**
+ * UK br Changer - Frontend Styles
+ * デバイス別の改行表示制御
+ */
+
+/* PCのみ表示(タブレット・モバイルで非表示) */
+.uk-br-show-pc-only {
+    display: inline;
+}
+
+@media screen and (max-width: 1024px) {
+    br.uk-br-show-pc-only {
+        display: none;
+    }
+}
+
+/* タブレットのみ表示(PC・モバイルで非表示) */
+br.uk-br-show-tablet-only {
+    display: none;
+}
+
+@media screen and (min-width: 768px) and (max-width: 1024px) {
+    br.uk-br-show-tablet-only {
+        display: inline;
+    }
+}
+
+/* モバイルのみ表示(PC・タブレットで非表示) */
+br.uk-br-show-mobile-only {
+    display: none;
+}
+
+@media screen and (max-width: 767px) {
+    br.uk-br-show-mobile-only {
+        display: inline;
+    }
+}
