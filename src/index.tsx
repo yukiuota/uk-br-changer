@@ -1,18 +1,37 @@
 import { addFilter } from '@wordpress/hooks';
 import { createHigherOrderComponent } from '@wordpress/compose';
-import { InspectorControls, withColors } from '@wordpress/block-editor';
+import { InspectorControls } from '@wordpress/block-editor';
 import { PanelBody, Button, ColorIndicator } from '@wordpress/components';
-import { useState, useEffect, Fragment } from '@wordpress/element';
+import { Fragment, useEffect, useRef, useState } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import type { BlockEditProps } from '@wordpress/blocks';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 
-// 型定義
+declare const wp: any;
+
+interface BrColorSettings {
+    pc: string;
+    tablet: string;
+    mobile: string;
+}
+
+interface LegacyBrColors {
+    pc?: string;
+    tablet?: string;
+    mobile?: string;
+}
+
 interface BrSettings {
-    [index: number]: string;
+    [key: string]: string | BrColorSettings | undefined;
+    __colors?: BrColorSettings;
 }
 
 interface CustomAttributes {
     brSettings?: BrSettings;
+    brColors?: LegacyBrColors;
+    brPcColor?: string;
+    brTabletColor?: string;
+    brMobileColor?: string;
 }
 
 interface BrTypeConfig {
@@ -25,49 +44,38 @@ interface BrTypes {
     [key: string]: BrTypeConfig;
 }
 
-interface ColorProps {
-    color?: string;
-}
+type DeviceKey = 'pc' | 'tablet' | 'mobile';
 
-interface WithColorsProps extends BlockEditProps<CustomAttributes> {
-    pcColor: ColorProps;
-    tabletColor: ColorProps;
-    mobileColor: ColorProps;
-    setPcColor: (color: string) => void;
-    setTabletColor: (color: string) => void;
-    setMobileColor: (color: string) => void;
-}
+type SupportedBlockEditProps = BlockEditProps<CustomAttributes> & {
+    name: string;
+};
 
-// 改行タイプごとの色定義
-const BR_TYPES: BrTypes = {
+const DEFAULT_COLORS: Record<DeviceKey, string> = {
+    pc: '#2271b1',
+    tablet: '#d63638',
+    mobile: '#00a32a',
+};
+
+const BASE_BR_TYPES: BrTypes = {
     'uk-br-show-pc-only': {
         label: 'PCのみ',
-        color: '#2271b1',
-        icon: '🖥️'
+        color: DEFAULT_COLORS.pc,
+        icon: '🖥️',
     },
     'uk-br-show-tablet-only': {
         label: 'タブレットのみ',
-        color: '#d63638',
-        icon: '📱'
+        color: DEFAULT_COLORS.tablet,
+        icon: '📱',
     },
     'uk-br-show-mobile-only': {
         label: 'スマホのみ',
-        color: '#00a32a',
-        icon: '📱'
-    }
+        color: DEFAULT_COLORS.mobile,
+        icon: '📱',
+    },
 };
 
-/**
- * 対応するブロックのリスト
- */
-const supportedBlocks: string[] = [
-    'core/heading',
-    'core/paragraph'
-];
+const supportedBlocks: string[] = ['core/heading', 'core/paragraph'];
 
-/**
- * ブロック属性にカスタム属性を追加
- */
 function addBreakpointAttributes(settings: any, name: string): any {
     if (!supportedBlocks.includes(name)) {
         return settings;
@@ -81,95 +89,115 @@ function addBreakpointAttributes(settings: any, name: string): any {
                 type: 'object',
                 default: {},
             },
+            brPcColor: {
+                type: 'string',
+                default: DEFAULT_COLORS.pc,
+            },
+            brTabletColor: {
+                type: 'string',
+                default: DEFAULT_COLORS.tablet,
+            },
+            brMobileColor: {
+                type: 'string',
+                default: DEFAULT_COLORS.mobile,
+            },
+            brColors: {
+                type: 'object',
+                default: {},
+            },
         },
     };
 }
 
-addFilter(
-    'blocks.registerBlockType',
-    'uk-br-changer/add-breakpoint-attributes',
-    addBreakpointAttributes
-);
+addFilter('blocks.registerBlockType', 'uk-br-changer/add-breakpoint-attributes', addBreakpointAttributes);
 
-/**
- * ブロックエディタにカスタムサイドバーを追加
- */
 const withBreakControls = createHigherOrderComponent((BlockEdit) => {
-    return withColors(
-        { pcColor: 'pc-break-color' },
-        { tabletColor: 'tablet-break-color' },
-        { mobileColor: 'mobile-break-color' }
-    )((props: WithColorsProps) => {
+    return (props: SupportedBlockEditProps) => {
         if (!supportedBlocks.includes(props.name)) {
             return <BlockEdit {...props} />;
         }
 
+        const { attributes, setAttributes, clientId } = props;
         const {
-            attributes,
-            setAttributes,
-            clientId,
-            pcColor,
-            tabletColor,
-            mobileColor,
-            setPcColor,
-            setTabletColor,
-            setMobileColor
-        } = props;
-        const { brSettings = {} } = attributes;
+            brSettings = {},
+            brPcColor,
+            brTabletColor,
+            brMobileColor,
+            brColors,
+        } = attributes;
+
         const [brElements, setBrElements] = useState<HTMLBRElement[]>([]);
+        const blockElementRef = useRef<HTMLElement | null>(null);
+        const lastBrCountRef = useRef(0);
+        const applyMarkersRef = useRef<() => void>(() => {});
 
-        // 初期色の設定
-        useEffect(() => {
-            if (!pcColor.color) setPcColor('#2271b1');
-            if (!tabletColor.color) setTabletColor('#d63638');
-            if (!mobileColor.color) setMobileColor('#00a32a');
-        }, []);
-
-        // カスタム色を使用したBR_TYPES
-        const dynamicBrTypes: BrTypes = {
-            'uk-br-show-pc-only': {
-                label: 'PCのみ',
-                color: pcColor.color || '#2271b1',
-                icon: '🖥️'
-            },
-            'uk-br-show-tablet-only': {
-                label: 'タブレットのみ',
-                color: tabletColor.color || '#d63638',
-                icon: '📱'
-            },
-            'uk-br-show-mobile-only': {
-                label: 'スマホのみ',
-                color: mobileColor.color || '#00a32a',
-                icon: '📱'
-            }
+        const resolvedColors: BrColorSettings = brSettings.__colors || {
+            pc: brPcColor || brColors?.pc || DEFAULT_COLORS.pc,
+            tablet: brTabletColor || brColors?.tablet || DEFAULT_COLORS.tablet,
+            mobile: brMobileColor || brColors?.mobile || DEFAULT_COLORS.mobile,
         };
 
         useEffect(() => {
-            let lastBrCount = 0;
+            if (brSettings.__colors) {
+                return;
+            }
 
-            // ブロック内のbrタグを取得して設定を適用
-            const updateBrList = () => {
-                const blockElement = document.querySelector(`[data-block="${clientId}"]`);
-                if (!blockElement) return;
+            const initialColors: BrColorSettings = {
+                pc: brPcColor || brColors?.pc || DEFAULT_COLORS.pc,
+                tablet: brTabletColor || brColors?.tablet || DEFAULT_COLORS.tablet,
+                mobile: brMobileColor || brColors?.mobile || DEFAULT_COLORS.mobile,
+            };
 
-                // 既存のマーカーを削除
+            setAttributes({
+                brSettings: {
+                    ...brSettings,
+                    __colors: initialColors,
+                },
+                brColors: {},
+                brPcColor: initialColors.pc,
+                brTabletColor: initialColors.tablet,
+                brMobileColor: initialColors.mobile,
+            });
+        }, [brSettings, brColors, brPcColor, brTabletColor, brMobileColor, setAttributes]);
+
+        const dynamicBrTypes: BrTypes = {
+            'uk-br-show-pc-only': {
+                ...BASE_BR_TYPES['uk-br-show-pc-only'],
+                color: resolvedColors.pc,
+            },
+            'uk-br-show-tablet-only': {
+                ...BASE_BR_TYPES['uk-br-show-tablet-only'],
+                color: resolvedColors.tablet,
+            },
+            'uk-br-show-mobile-only': {
+                ...BASE_BR_TYPES['uk-br-show-mobile-only'],
+                color: resolvedColors.mobile,
+            },
+        };
+
+        useEffect(() => {
+            applyMarkersRef.current = () => {
+                const blockElement = blockElementRef.current;
+                if (!blockElement) {
+                    return;
+                }
+
                 const existingMarkers = blockElement.querySelectorAll('.uk-br-marker');
-                existingMarkers.forEach(marker => marker.remove());
+                existingMarkers.forEach((marker) => marker.remove());
 
-                // brタグを検索（複数のセレクタで試す）
                 let brs = Array.from(blockElement.querySelectorAll<HTMLBRElement>('br[data-rich-text-line-break="true"]'));
-                if (brs.length === 0) {
+                if (!brs.length) {
                     brs = Array.from(blockElement.querySelectorAll<HTMLBRElement>('br'));
                 }
 
                 setBrElements(brs);
-                lastBrCount = brs.length;
+                lastBrCountRef.current = brs.length;
 
-                // 保存された設定をbrタグに適用
                 brs.forEach((br, index) => {
-                    const setting = brSettings[index];
-                    br.classList.remove('uk-br-show-pc-only', 'uk-br-show-tablet-only', 'uk-br-show-mobile-only');
+                    const rawSetting = brSettings[index];
+                    const setting = typeof rawSetting === 'string' ? rawSetting : undefined;
 
+                    br.classList.remove('uk-br-show-pc-only', 'uk-br-show-tablet-only', 'uk-br-show-mobile-only');
                     if (setting) {
                         br.classList.add(setting);
                     }
@@ -190,17 +218,16 @@ const withBreakControls = createHigherOrderComponent((BlockEdit) => {
                         markerClass = 'uk-br-marker-mobile';
                     }
 
-                    // 改行の直前にマーカーを挿入
-                    const prevNode = br.previousSibling;
-                    if (!prevNode || !(prevNode as HTMLElement).classList || !(prevNode as HTMLElement).classList.contains('uk-br-marker')) {
+                    const prevNode = br.previousSibling as HTMLElement | null;
+                    const isMarker = prevNode?.classList?.contains('uk-br-marker');
+
+                    if (!isMarker) {
                         const marker = document.createElement('span');
-                        marker.className = 'uk-br-marker' + (markerClass ? ' ' + markerClass : '');
+                        marker.className = 'uk-br-marker' + (markerClass ? ` ${markerClass}` : '');
                         marker.contentEditable = 'false';
                         marker.setAttribute('data-br-index', String(index + 1));
                         marker.setAttribute('aria-label', markerText);
                         marker.setAttribute('title', markerText);
-
-                        // インラインスタイルで幅と高さを設定
                         marker.style.width = '10px';
                         marker.style.height = '10px';
                         marker.style.display = 'inline-block';
@@ -208,13 +235,12 @@ const withBreakControls = createHigherOrderComponent((BlockEdit) => {
                         marker.style.verticalAlign = 'middle';
                         marker.style.margin = '0 4px';
 
-                        // 色を設定
                         if (setting === 'uk-br-show-pc-only') {
-                            marker.style.backgroundColor = pcColor.color || '#2271b1';
+                            marker.style.backgroundColor = resolvedColors.pc;
                         } else if (setting === 'uk-br-show-tablet-only') {
-                            marker.style.backgroundColor = tabletColor.color || '#d63638';
+                            marker.style.backgroundColor = resolvedColors.tablet;
                         } else if (setting === 'uk-br-show-mobile-only') {
-                            marker.style.backgroundColor = mobileColor.color || '#00a32a';
+                            marker.style.backgroundColor = resolvedColors.mobile;
                         }
 
                         br.parentNode?.insertBefore(marker, br);
@@ -222,20 +248,41 @@ const withBreakControls = createHigherOrderComponent((BlockEdit) => {
                 });
             };
 
-            updateBrList();
+            applyMarkersRef.current();
+        }, [brSettings, resolvedColors.pc, resolvedColors.tablet, resolvedColors.mobile]);
 
-            // MutationObserverでDOM変更を監視
-            const blockElement = document.querySelector(`[data-block="${clientId}"]`);
-            if (blockElement) {
-                const observer = new MutationObserver((mutations) => {
-                    // br要素の数が変わった場合のみ更新
-                    let currentBrCount = blockElement.querySelectorAll('br[data-rich-text-line-break="true"]').length;
-                    if (currentBrCount === 0) {
-                        currentBrCount = blockElement.querySelectorAll('br').length;
+        useEffect(() => {
+            let retryTimer: number | null = null;
+            let observer: MutationObserver | null = null;
+            let updateTimer: number | null = null;
+
+            const findBlockElement = () => {
+                const blockElement = document.querySelector<HTMLElement>(`[data-block="${clientId}"]`);
+                if (!blockElement) {
+                    retryTimer = window.setTimeout(findBlockElement, 150);
+                    return;
+                }
+
+                blockElementRef.current = blockElement;
+                applyMarkersRef.current();
+
+                observer = new MutationObserver(() => {
+                    const element = blockElementRef.current;
+                    if (!element) {
+                        return;
                     }
-                    if (currentBrCount !== lastBrCount) {
-                        clearTimeout((window as any).ukBrUpdateTimeout);
-                        (window as any).ukBrUpdateTimeout = setTimeout(updateBrList, 100);
+
+                    const richTextBrs = element.querySelectorAll('br[data-rich-text-line-break="true"]');
+                    const fallbackBrs = element.querySelectorAll('br');
+                    const currentBrCount = richTextBrs.length || fallbackBrs.length;
+
+                    if (currentBrCount !== lastBrCountRef.current) {
+                        if (updateTimer) {
+                            window.clearTimeout(updateTimer);
+                        }
+                        updateTimer = window.setTimeout(() => {
+                            applyMarkersRef.current();
+                        }, 120);
                     }
                 });
 
@@ -243,22 +290,28 @@ const withBreakControls = createHigherOrderComponent((BlockEdit) => {
                     childList: true,
                     subtree: true,
                 });
+            };
 
-                return () => {
-                    observer.disconnect();
-                    clearTimeout((window as any).ukBrUpdateTimeout);
-                };
-            }
-        }, [clientId, brSettings, pcColor.color, tabletColor.color, mobileColor.color]);
+            findBlockElement();
+
+            return () => {
+                if (retryTimer) {
+                    window.clearTimeout(retryTimer);
+                }
+                if (updateTimer) {
+                    window.clearTimeout(updateTimer);
+                }
+                observer?.disconnect();
+            };
+        }, [clientId]);
 
         const toggleBrClass = (index: number, className: string): void => {
             const newSettings: BrSettings = { ...brSettings };
+            const currentValue = typeof newSettings[index] === 'string' ? (newSettings[index] as string) : undefined;
 
-            // 既に同じクラスが設定されている場合は削除
-            if (newSettings[index] === className) {
+            if (currentValue === className) {
                 delete newSettings[index];
             } else {
-                // 新しいクラスを設定
                 newSettings[index] = className;
             }
 
@@ -266,7 +319,8 @@ const withBreakControls = createHigherOrderComponent((BlockEdit) => {
         };
 
         const getBrClass = (index: number): string | null => {
-            return brSettings[index] || null;
+            const value = brSettings[index];
+            return typeof value === 'string' ? value : null;
         };
 
         return (
@@ -274,19 +328,23 @@ const withBreakControls = createHigherOrderComponent((BlockEdit) => {
                 <BlockEdit {...props} />
                 <InspectorControls>
                     <PanelBody title={__('改行の表示設定', 'uk-br-changer')} initialOpen={true}>
-                        <p style={{
-                            fontSize: '13px',
-                            color: '#757575',
-                            marginBottom: '12px'
-                        }}>
+                        <p
+                            style={{
+                                fontSize: '13px',
+                                color: '#757575',
+                                marginBottom: '12px',
+                            }}
+                        >
                             {__('このブロック内の改行を個別に設定できます', 'uk-br-changer')}
                         </p>
 
                         {brElements.length === 0 && (
-                            <p style={{
-                                fontSize: '13px',
-                                color: '#999'
-                            }}>
+                            <p
+                                style={{
+                                    fontSize: '13px',
+                                    color: '#999',
+                                }}
+                            >
                                 {__('改行がありません。Shift+Enterで改行を追加してください。', 'uk-br-changer')}
                             </p>
                         )}
@@ -304,76 +362,91 @@ const withBreakControls = createHigherOrderComponent((BlockEdit) => {
                                         border: brType ? `2px solid ${brType.color}` : '1px solid #ddd',
                                         borderRadius: '4px',
                                         backgroundColor: brType ? `${brType.color}15` : '#f9f9f9',
-                                        transition: 'all 0.2s ease'
+                                        transition: 'all 0.2s ease',
                                     }}
                                 >
-                                    <div style={{
-                                        marginBottom: '8px',
-                                        fontWeight: '500',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px'
-                                    }}>
-                                        <span>{__('改行', 'uk-br-changer')} {index + 1}</span>
+                                    <div
+                                        style={{
+                                            marginBottom: '8px',
+                                            fontWeight: '500',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                        }}
+                                    >
+                                        <span>
+                                            {__('改行', 'uk-br-changer')} {index + 1}
+                                        </span>
                                         {brType && (
-                                            <span style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '4px',
-                                                fontSize: '11px',
-                                                color: brType.color,
-                                                fontWeight: 'bold'
-                                            }}>
+                                            <span
+                                                style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    fontSize: '11px',
+                                                    color: brType.color,
+                                                    fontWeight: 'bold',
+                                                }}
+                                            >
                                                 <ColorIndicator colorValue={brType.color} />
                                                 {brType.icon} {brType.label}
                                             </span>
                                         )}
                                     </div>
-                                    <div style={{
-                                        marginBottom: '8px',
-                                        fontSize: '12px',
-                                        color: '#666'
-                                    }}>
+                                    <div
+                                        style={{
+                                            marginBottom: '8px',
+                                            fontSize: '12px',
+                                            color: '#666',
+                                        }}
+                                    >
                                         {__('表示するデバイスを選択:', 'uk-br-changer')}
                                     </div>
-                                    <div style={{
-                                        display: 'flex',
-                                        gap: '4px',
-                                        flexWrap: 'wrap'
-                                    }}>
+                                    <div
+                                        style={{
+                                            display: 'flex',
+                                            gap: '4px',
+                                            flexWrap: 'wrap',
+                                        }}
+                                    >
                                         {Object.entries(dynamicBrTypes).map(([className, config]) => (
                                             <Button
                                                 key={className}
                                                 isSmall
                                                 variant={currentClass === className ? 'primary' : 'secondary'}
-                                                onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-                                                    e.preventDefault();
+                                                onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+                                                    event.preventDefault();
                                                     toggleBrClass(index, className);
                                                 }}
                                                 style={{
                                                     borderColor: currentClass === className ? config.color : undefined,
-                                                    backgroundColor: currentClass === className ? config.color : undefined,
+                                                    backgroundColor:
+                                                        currentClass === className ? config.color : undefined,
                                                 }}
                                             >
-                                                <span style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '4px'
-                                                }}>
+                                                <span
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '4px',
+                                                    }}
+                                                >
                                                     {config.icon} {config.label}
                                                 </span>
                                             </Button>
                                         ))}
                                     </div>
                                     {!currentClass && (
-                                        <div style={{
-                                            marginTop: '8px',
-                                            fontSize: '11px',
-                                            color: '#999',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '4px'
-                                        }}>
+                                        <div
+                                            style={{
+                                                marginTop: '8px',
+                                                fontSize: '11px',
+                                                color: '#999',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                            }}
+                                        >
                                             <ColorIndicator colorValue="#999" />
                                             {__('すべてのデバイスで表示', 'uk-br-changer')}
                                         </div>
@@ -385,27 +458,19 @@ const withBreakControls = createHigherOrderComponent((BlockEdit) => {
                 </InspectorControls>
             </Fragment>
         );
-    });
+    };
 }, 'withBreakControls');
 
-addFilter(
-    'editor.BlockEdit',
-    'uk-br-changer/with-break-controls',
-    withBreakControls
-);
+addFilter('editor.BlockEdit', 'uk-br-changer/with-break-controls', withBreakControls);
 
-/**
- * ブロックの保存時にbrタグにクラスを追加
- */
 addFilter(
     'blocks.getSaveContent.extraProps',
     'uk-br-changer/apply-br-classes',
-    (extraProps: any, blockType: any, attributes: CustomAttributes) => {
+    (extraProps: any, blockType: any) => {
         if (!supportedBlocks.includes(blockType.name)) {
             return extraProps;
         }
 
-        // 保存時の処理は render_block フックで行う
         return extraProps;
     }
 );

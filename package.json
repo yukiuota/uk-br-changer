@@ -23,9 +23,11 @@
     "url": "https://github.com/yukiuota/uk-br-changer.git"
   },
   "devDependencies": {
-    "@wordpress/scripts": "^26.0.0",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
+    "@types/wordpress__block-editor": "^14.21.2",
+    "@types/wordpress__blocks": "^12.5.18",
+    "@wordpress/scripts": "^26.0.0",
     "typescript": "^5.0.0"
   },
   "dependencies": {
