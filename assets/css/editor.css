@@ -22,7 +22,7 @@
     }
 }
 
-/* JavaScriptで挿入されるマーカーのスタイル */
+/* 改行マーカーのスタイル - 色の丸で表示 */
 .uk-br-marker {
     display: inline-block !important;
     vertical-align: middle;
@@ -30,7 +30,32 @@
     transition: all 0.2s ease;
 }
 
+/* withColorsで動的に色が設定されるため、デフォルト色のみ定義 */
+.uk-br-marker-pc {
+    width: 10px !important;
+    height: 10px !important;
+    border-radius: 50%;
+    background-color: #2271b1;
+    /* PC: 青（デフォルト） */
+}
+
+.uk-br-marker-tablet {
+    width: 10px !important;
+    height: 10px !important;
+    border-radius: 50%;
+    background-color: #d63638;
+    /* タブレット: 赤（デフォルト） */
+}
+
+.uk-br-marker-mobile {
+    width: 10px !important;
+    height: 10px !important;
+    border-radius: 50%;
+    background-color: #00a32a;
+    /* モバイル: 緑（デフォルト） */
+}
+
 .uk-br-marker:hover {
-    transform: scale(1.05);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transform: scale(1.3);
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
 }
