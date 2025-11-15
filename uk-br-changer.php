@@ -304,7 +304,7 @@ add_action('wp_enqueue_scripts', 'uk_br_changer_enqueue_frontend_assets');
 add_action('enqueue_block_assets', 'uk_br_changer_enqueue_frontend_assets');
 
 /**
- * ブロックのレンダリング時にbrタグにクラスを適用
+ * ブロックのレンダリング時にbrタグにクラスを適用し、マーカーを削除
  */
 function uk_br_changer_render_block($block_content, $block) {
     // 対応するブロックのみ処理
@@ -312,33 +312,43 @@ function uk_br_changer_render_block($block_content, $block) {
         return $block_content;
     }
 
-    // brSettings属性がない場合は何もしない
-    if (empty($block['attrs']['brSettings'])) {
-        return $block_content;
-    }
-
-    $br_settings = $block['attrs']['brSettings'];
+    // brSettings属性がない場合でもマーカーを削除
+    $has_settings = !empty($block['attrs']['brSettings']);
+    $br_settings = $has_settings ? $block['attrs']['brSettings'] : array();
     
     // DOMDocumentを使用してHTMLを解析
     $dom = new DOMDocument();
+    libxml_use_internal_errors(true);
     $dom->loadHTML('<?xml encoding="UTF-8">' . $block_content, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
     
-    // すべてのbrタグを取得
-    $br_tags = $dom->getElementsByTagName('br');
-    $br_array = array();
+    // マーカー要素を削除
+    $xpath = new DOMXPath($dom);
+    $markers = $xpath->query("//*[contains(@class, 'uk-br-marker')]");
     
-    // DOMNodeListは動的なので配列に変換
-    foreach ($br_tags as $br) {
-        $br_array[] = $br;
+    foreach ($markers as $marker) {
+        $marker->parentNode->removeChild($marker);
     }
     
-    // 各brタグにクラスを適用
-    foreach ($br_array as $index => $br) {
-        if (isset($br_settings[$index])) {
-            $class = $br_settings[$index];
-            $existing_class = $br->getAttribute('class');
-            $new_class = $existing_class ? $existing_class . ' ' . $class : $class;
-            $br->setAttribute('class', $new_class);
+    // brSettings属性がある場合のみbrタグにクラスを適用
+    if ($has_settings) {
+        // すべてのbrタグを取得
+        $br_tags = $dom->getElementsByTagName('br');
+        $br_array = array();
+        
+        // DOMNodeListは動的なので配列に変換
+        foreach ($br_tags as $br) {
+            $br_array[] = $br;
+        }
+        
+        // 各brタグにクラスを適用
+        foreach ($br_array as $index => $br) {
+            if (isset($br_settings[$index])) {
+                $class = $br_settings[$index];
+                $existing_class = $br->getAttribute('class');
+                $new_class = $existing_class ? $existing_class . ' ' . $class : $class;
+                $br->setAttribute('class', $new_class);
+            }
         }
     }
     
